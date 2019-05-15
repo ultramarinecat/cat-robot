@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <title>navigationService.js</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, target-densitydpi=160dpi, initial-scale=1.0; maximum-scale=1.0; user-scalable=0;">
+  <link rel="stylesheet" media="all" href="docco.css" />
+</head>
+<body>
+  <div id="container">
+    <div id="background"></div>
+    
+      <ul id="jump_to">
+        <li>
+          <a class="large" href="javascript:void(0);">Jump To &hellip;</a>
+          <a class="small" href="javascript:void(0);">+</a>
+          <div id="jump_wrapper">
+          <div id="jump_page_wrapper">
+            <div id="jump_page">
+              
+                
+                <a class="source" href="autoredeploy/autoredeploy.html">
+                  autoredeploy/autoredeploy.js
+                </a>
+              
+                
+                <a class="source" href="boardService.html">
+                  boardService.js
+                </a>
+              
+                
+                <a class="source" href="catDetectionService.html">
+                  catDetectionService.js
+                </a>
+              
+                
+                <a class="source" href="connectionService.html">
+                  connectionService.js
+                </a>
+              
+                
+                <a class="source" href="detectCat.html">
+                  detectCat.js
+                </a>
+              
+                
+                <a class="source" href="index.html">
+                  index.js
+                </a>
+              
+                
+                <a class="source" href="ledService.html">
+                  ledService.js
+                </a>
+              
+                
+                <a class="source" href="logger.html">
+                  logger.js
+                </a>
+              
+                
+                <a class="source" href="messages.html">
+                  messages.js
+                </a>
+              
+                
+                <a class="source" href="navigationService.html">
+                  navigationService.js
+                </a>
+              
+                
+                <a class="source" href="pubsub.html">
+                  pubsub.js
+                </a>
+              
+                
+                <a class="source" href="robot.html">
+                  robot.js
+                </a>
+              
+                
+                <a class="source" href="scripts/calibrateServo.html">
+                  scripts/calibrateServo.js
+                </a>
+              
+                
+                <a class="source" href="scripts/deploy.html">
+                  scripts/deploy.js
+                </a>
+              
+                
+                <a class="source" href="scripts/deployFunction.html">
+                  scripts/deployFunction.js
+                </a>
+              
+                
+                <a class="source" href="scripts/generateAuthToken.html">
+                  scripts/generateAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="scripts/revokeAuthToken.html">
+                  scripts/revokeAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="scripts/sendMessage.html">
+                  scripts/sendMessage.js
+                </a>
+              
+                
+                <a class="source" href="scripts/subscribeToLogMessages.html">
+                  scripts/subscribeToLogMessages.js
+                </a>
+              
+            </div>
+          </div>
+        </li>
+      </ul>
+    
+    <ul class="sections">
+        
+          <li id="title">
+              <div class="annotation">
+                  <h1>navigationService.js</h1>
+              </div>
+          </li>
+        
+        
+        
+        <li id="section-1">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-1">&#182;</a>
+              </div>
+              <p>navigation service</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-meta">'use strict'</span>;
+
+<span class="hljs-keyword">const</span> five = <span class="hljs-built_in">require</span>(<span class="hljs-string">'johnny-five'</span>);
+<span class="hljs-keyword">const</span> _ = <span class="hljs-built_in">require</span>(<span class="hljs-string">'lodash'</span>);
+
+<span class="hljs-keyword">const</span> pubsub = <span class="hljs-built_in">require</span>(<span class="hljs-string">'./pubsub'</span>);
+<span class="hljs-keyword">const</span> logger = <span class="hljs-built_in">require</span>(<span class="hljs-string">'./logger'</span>);
+<span class="hljs-keyword">const</span> messages = <span class="hljs-built_in">require</span>(<span class="hljs-string">'./messages'</span>);
+<span class="hljs-keyword">const</span> { pins } = <span class="hljs-built_in">require</span>(<span class="hljs-string">'./boardService'</span>);
+
+<span class="hljs-keyword">const</span> NORMAL_SPEED = <span class="hljs-number">0.04</span>;
+<span class="hljs-keyword">const</span> REVERSE_SPEED = <span class="hljs-number">0.025</span>;
+<span class="hljs-keyword">const</span> TURNING_SPEED = <span class="hljs-number">0.03</span>;
+
+<span class="hljs-keyword">const</span> TURN_DURATION = <span class="hljs-number">1000</span>;
+<span class="hljs-keyword">const</span> BACK_UP_DURATION = <span class="hljs-number">650</span>;
+
+<span class="hljs-keyword">const</span> PROXIMITY_DATA_EVENT = <span class="hljs-string">'data'</span>;
+<span class="hljs-keyword">const</span> PROXIMITY_DATA_EVENT_FREQUENCY = <span class="hljs-number">100</span>;
+<span class="hljs-keyword">const</span> PROXIMITY_SENSOR_CONTROLLER = <span class="hljs-string">'GP2Y0A41SK0F'</span>; <span class="hljs-comment">// Sharp GP2Y0A41SK0F (short range)</span>
+
+<span class="hljs-keyword">const</span> MAX_RECENT_TURNS = <span class="hljs-number">3</span>;
+<span class="hljs-keyword">const</span> MAX_RECENT_TURNS_TIMEFRAME = <span class="hljs-number">15000</span>;
+<span class="hljs-keyword">const</span> PROXIMITIES_RECODING_DURATION = <span class="hljs-number">1500</span>;
+
+<span class="hljs-keyword">const</span> MIN_PROXIMITY = <span class="hljs-number">8</span>; <span class="hljs-comment">// cm</span>
+<span class="hljs-keyword">const</span> MAX_PROXIMITY = <span class="hljs-number">25</span>;
+
+<span class="hljs-keyword">const</span> UNCAUGHT_EXCEPTION = <span class="hljs-string">'uncaughtException'</span>;
+<span class="hljs-keyword">const</span> ERROR_EXIT_DELAY = <span class="hljs-number">1500</span>;
+
+process.on(UNCAUGHT_EXCEPTION, handleUncaughException);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-2">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-2">&#182;</a>
+              </div>
+              <p>publish error messages and shut down</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">handleUncaughException</span>(<span class="hljs-params">e</span>) </span>{
+  logger.error(<span class="hljs-string">'navigation service uncaughtException occured!'</span>, e);
+
+  pubsub.pub(messages.CRASHING);
+
+  <span class="hljs-keyword">const</span> timer = setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+    process.exit(<span class="hljs-number">1</span>);
+  }, ERROR_EXIT_DELAY);
+
+  timer.unref();
+}
+
+<span class="hljs-keyword">let</span> leftWheel;
+<span class="hljs-keyword">let</span> rightWheel;
+<span class="hljs-keyword">let</span> turning = <span class="hljs-literal">false</span>;
+<span class="hljs-keyword">let</span> dispalyTurnInProgress = <span class="hljs-literal">false</span>;
+<span class="hljs-keyword">let</span> recordingProximities = <span class="hljs-literal">false</span>;
+<span class="hljs-keyword">const</span> recentTurns = [];
+<span class="hljs-keyword">const</span> proximities = <span class="hljs-keyword">new</span> <span class="hljs-built_in">Set</span>();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-3">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-3">&#182;</a>
+              </div>
+              <p>init navigation</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">startup</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-4">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-4">&#182;</a>
+              </div>
+              <p>init servos (wheels)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    leftWheel = <span class="hljs-keyword">new</span> five.Servo.Continuous({
+      <span class="hljs-attr">pin</span>: pins.PIN_5
+    });
+    leftWheel.stop();
+
+    rightWheel = <span class="hljs-keyword">new</span> five.Servo.Continuous({
+      <span class="hljs-attr">pin</span>: pins.PIN_6,
+      <span class="hljs-attr">invert</span>: <span class="hljs-literal">true</span>
+    });
+    rightWheel.stop();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-5">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-5">&#182;</a>
+              </div>
+              <p>init ir sensor</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">const</span> proximitySensor = <span class="hljs-keyword">new</span> five.Proximity({
+      <span class="hljs-attr">controller</span>: PROXIMITY_SENSOR_CONTROLLER,
+      <span class="hljs-attr">freq</span>: PROXIMITY_DATA_EVENT_FREQUENCY,
+      <span class="hljs-attr">pin</span>: pins.PIN_A0
+    });</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-6">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-6">&#182;</a>
+              </div>
+              <p>listen for ir sensor data events</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    proximitySensor.on(PROXIMITY_DATA_EVENT, handleProximityChange);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-7">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-7">&#182;</a>
+              </div>
+              <p>listen for turn messages or error/shutdown messages to stop wheels</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-comment">/* eslint-disable eqeqeq */</span>
+    pubsub
+      .sub(<span class="hljs-function"><span class="hljs-params">message</span> =&gt;</span> {
+        <span class="hljs-keyword">if</span> (
+          message == messages.SHUTTING_DOWN ||
+          message == messages.CRASHING ||
+          message == messages.ERROR_STATE
+        ) {
+          stop();
+          <span class="hljs-keyword">return</span>;
+        }
+
+        <span class="hljs-keyword">if</span> (message == messages.TURN_LEFT) {
+          turnLeft(<span class="hljs-literal">false</span>);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        <span class="hljs-keyword">if</span> (message == messages.TURN_RIGHT) {
+          turnRight(<span class="hljs-literal">false</span>);
+        }
+      })
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+        resolve();
+      })
+      .catch(
+        <span class="hljs-comment">/* istanbul ignore next */</span> e =&gt; {
+          logger.warn(<span class="hljs-string">'an error occurred subscribing to shutdown/error messages: '</span>, e);
+
+          pubsub.pub(messages.ERROR_STATE);
+          reject(e);
+        }
+      );
+    <span class="hljs-comment">/* eslint-enable eqeqeq */</span>
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-8">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-8">&#182;</a>
+              </div>
+              <p>move forward</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">moveForward</span>(<span class="hljs-params"></span>) </span>{
+  logger.info(<span class="hljs-string">'moving forward...'</span>);
+
+  <span class="hljs-keyword">if</span> (dispalyTurnInProgress) {
+    pubsub.pub(messages.TURN_COMPLETED);
+    dispalyTurnInProgress = <span class="hljs-literal">false</span>;
+  }
+
+  leftWheel.cw(NORMAL_SPEED);
+  rightWheel.cw(NORMAL_SPEED);
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-9">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-9">&#182;</a>
+              </div>
+              <p>move backward</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">moveBackward</span>(<span class="hljs-params"></span>) </span>{
+  logger.verbose(<span class="hljs-string">'moving backward...'</span>);
+
+  leftWheel.ccw(REVERSE_SPEED);
+  rightWheel.ccw(REVERSE_SPEED);
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-10">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-10">&#182;</a>
+              </div>
+              <p>stop</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">stop</span>(<span class="hljs-params"></span>) </span>{
+  logger.verbose(<span class="hljs-string">'stopping...'</span>);
+
+  leftWheel.stop();
+  rightWheel.stop();
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-11">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-11">&#182;</a>
+              </div>
+              <p>turn right</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">turnRight</span>(<span class="hljs-params">autoroaming</span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    <span class="hljs-keyword">if</span> (!autoroaming) {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-12">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-12">&#182;</a>
+              </div>
+              <p>(autoroaming mode will keep track of whether we’re turning)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      <span class="hljs-keyword">if</span> (turning) {
+        logger.info(<span class="hljs-string">'rejecting right turn request, already turning'</span>);
+
+        dispalyTurnInProgress = <span class="hljs-literal">true</span>;
+        pubsub.pub(messages.TURN_IN_PROGRESS);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      turning = <span class="hljs-literal">true</span>;
+      pubsub.pub(messages.TURNING_RIGHT);
+      stop();
+    }
+
+    logger.info(<span class="hljs-string">'turning right...'</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-13">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-13">&#182;</a>
+              </div>
+              <p>turn right for TURN_DURATION ms</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    leftWheel.cw(TURNING_SPEED);
+    rightWheel.ccw(TURNING_SPEED);
+
+    setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">if</span> (!autoroaming) {
+        moveForward();
+        pubsub.pub(messages.TURN_COMPLETED);
+        turning = <span class="hljs-literal">false</span>;
+      }
+
+      resolve();
+    }, TURN_DURATION);
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-14">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-14">&#182;</a>
+              </div>
+              <p>turn left</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">turnLeft</span>(<span class="hljs-params">autoroaming</span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    <span class="hljs-keyword">if</span> (!autoroaming) {
+      <span class="hljs-keyword">if</span> (turning) {
+        logger.info(<span class="hljs-string">'rejecting right turn request, already turning'</span>);
+
+        dispalyTurnInProgress = <span class="hljs-literal">true</span>;
+        pubsub.pub(messages.TURN_IN_PROGRESS);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      turning = <span class="hljs-literal">true</span>;
+      pubsub.pub(messages.TURNING_LEFT);
+      stop();
+    }
+
+    logger.info(<span class="hljs-string">'turning left...'</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-15">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-15">&#182;</a>
+              </div>
+              <p>turn left for TURN_DURATION ms</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    leftWheel.ccw(TURNING_SPEED);
+    rightWheel.cw(TURNING_SPEED);
+
+    setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">if</span> (!autoroaming) {
+        moveForward();
+        pubsub.pub(messages.TURN_COMPLETED);
+        turning = <span class="hljs-literal">false</span>;
+      }
+
+      resolve();
+    }, TURN_DURATION);
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-16">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-16">&#182;</a>
+              </div>
+              <p>back up</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">backUp</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.verbose(<span class="hljs-string">'backing up...'</span>);
+
+    stop();
+    moveBackward();
+
+    setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      stop();
+      resolve();
+    }, BACK_UP_DURATION);
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-17">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-17">&#182;</a>
+              </div>
+              <p>check if robot has been making too many turns lately (might be stuck in a corner)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">needToLookAround</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">if</span> (recentTurns.length &lt; MAX_RECENT_TURNS) {
+    <span class="hljs-keyword">return</span> <span class="hljs-literal">false</span>;
+  }
+
+  <span class="hljs-keyword">return</span> _.now() - _.first(recentTurns) &lt; MAX_RECENT_TURNS_TIMEFRAME;
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-18">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-18">&#182;</a>
+              </div>
+              <p>record proximities and avoid obstacles</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">handleProximityChange</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">const</span> proximity = <span class="hljs-keyword">this</span>.cm;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-19">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-19">&#182;</a>
+              </div>
+              <p>logger.silly(<code>proximity: ${proximity} cm</code>);</p>
+
+            </div>
+            
+        </li>
+        
+        
+        <li id="section-20">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-20">&#182;</a>
+              </div>
+              <p>if recording proximities, add them to the set</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  <span class="hljs-keyword">if</span> (recordingProximities) {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-21">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-21">&#182;</a>
+              </div>
+              <p>(ouf of range proximities are sometimes negative)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    proximities.add(proximity &gt; <span class="hljs-number">0</span> ? proximity : MAX_PROXIMITY);
+    <span class="hljs-keyword">return</span>;
+  }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-22">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-22">&#182;</a>
+              </div>
+              <p>if closer than minimum proximity and not currently turning</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  <span class="hljs-keyword">if</span> (proximity &lt; MIN_PROXIMITY &amp;&amp; proximity &gt; <span class="hljs-number">0</span> &amp;&amp; !turning) {
+    turning = <span class="hljs-literal">true</span>;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-23">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-23">&#182;</a>
+              </div>
+              <p>logger.info(‘obstacle detected…’);</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">`obstacle detected... (proximity: <span class="hljs-subst">${proximity}</span>)`</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-24">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-24">&#182;</a>
+              </div>
+              <p>keep track of the times of the last MAX_RECENT_TURNS turns</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    recentTurns.push(_.now());
+    <span class="hljs-keyword">if</span> (recentTurns.length &gt; MAX_RECENT_TURNS) {
+      recentTurns.shift();
+    }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-25">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-25">&#182;</a>
+              </div>
+              <p>back up a bit</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    backUp()
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-26">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-26">&#182;</a>
+              </div>
+              <p>if robot has been making a lot of turns lately</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">if</span> (needToLookAround()) {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-27">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-27">&#182;</a>
+              </div>
+              <p>look around to pick a direction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>          logger.info(<span class="hljs-string">'possibly in a corner, looking around...'</span>);
+          <span class="hljs-keyword">return</span> decideDirection();
+        }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-28">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-28">&#182;</a>
+              </div>
+              <p>otherwise just pick left or right</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">return</span> _.random(<span class="hljs-number">1</span>) ? turnLeft(<span class="hljs-literal">true</span>) : turnRight(<span class="hljs-literal">true</span>);
+      })
+
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-29">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-29">&#182;</a>
+              </div>
+              <p>keep going</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        moveForward();
+        turning = <span class="hljs-literal">false</span>;
+      })
+
+      .catch(
+        <span class="hljs-comment">/* istanbul ignore next */</span> e =&gt; {
+          logger.error(
+            <span class="hljs-string">'an error occurred during movement reacting to proximity event!'</span>,
+            e
+          );
+          pubsub.pub(messages.ERROR_STATE);
+        }
+      );
+  }
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-30">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-30">&#182;</a>
+              </div>
+              <p>look both directions and choose the one where obstacles are further away</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">decideDirection</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-31">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-31">&#182;</a>
+              </div>
+              <p>randomly pick a direction to look first</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    <span class="hljs-keyword">const</span> lookLeftFirst = _.random(<span class="hljs-number">1</span>);
+    <span class="hljs-keyword">const</span> lookInitialDirection = lookLeftFirst ? turnLeft : turnRight;
+    <span class="hljs-keyword">const</span> lookOtherDirection = lookLeftFirst ? turnRight : turnLeft;
+
+    <span class="hljs-keyword">let</span> initialDirectionAverageProximity = <span class="hljs-number">0</span>;
+    <span class="hljs-keyword">let</span> otherDirectionAverageProximity = <span class="hljs-number">0</span>;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-32">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-32">&#182;</a>
+              </div>
+              <p>look in that direction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    lookInitialDirection(<span class="hljs-literal">true</span>)
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-33">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-33">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line no-shadow</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+          stop();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-34">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-34">&#182;</a>
+              </div>
+              <p>start recoding proximities</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>          recordingProximities = <span class="hljs-literal">true</span>;
+
+          setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-35">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-35">&#182;</a>
+              </div>
+              <p>stop recording proximities, note the average, clear proximities set</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>            recordingProximities = <span class="hljs-literal">false</span>;
+            initialDirectionAverageProximity = averageProximity(proximities);
+            proximities.clear();
+
+            logger.info(<span class="hljs-string">`average proximity: <span class="hljs-subst">${initialDirectionAverageProximity}</span>`</span>);
+            resolve();
+          }, PROXIMITIES_RECODING_DURATION);
+        });
+      })</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-36">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-36">&#182;</a>
+              </div>
+              <p>look in the other direction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+        <span class="hljs-keyword">return</span> lookOtherDirection(<span class="hljs-literal">true</span>);
+      })
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-37">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-37">&#182;</a>
+              </div>
+              <p>(turn again because we’re only back to the center)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">return</span> lookOtherDirection(<span class="hljs-literal">true</span>);
+      })
+
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-38">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-38">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line no-shadow</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+          stop();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-39">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-39">&#182;</a>
+              </div>
+              <p>start recoding proximities</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>          recordingProximities = <span class="hljs-literal">true</span>;
+
+          setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-40">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-40">&#182;</a>
+              </div>
+              <p>stop recording proximities, note the average, clear proximities set</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>            recordingProximities = <span class="hljs-literal">false</span>;
+            otherDirectionAverageProximity = averageProximity(proximities);
+            proximities.clear();
+
+            logger.info(<span class="hljs-string">`average proximity: <span class="hljs-subst">${otherDirectionAverageProximity}</span>`</span>);
+            resolve();
+          }, PROXIMITIES_RECODING_DURATION);
+        });
+      })
+
+      .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-41">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-41">&#182;</a>
+              </div>
+              <p>if this direction has further proximities, we’re all set</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">if</span> (otherDirectionAverageProximity &gt; initialDirectionAverageProximity) {
+          logger.info(<span class="hljs-string">`choosing <span class="hljs-subst">${lookLeftFirst ? <span class="hljs-string">'right'</span> : <span class="hljs-string">'left'</span>}</span>`</span>);
+
+          resolve();
+          <span class="hljs-keyword">return</span>;
+        }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-42">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-42">&#182;</a>
+              </div>
+              <p>otherwise, turn back to to the initial direction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        logger.info(<span class="hljs-string">`choosing <span class="hljs-subst">${lookLeftFirst ? <span class="hljs-string">'left'</span> : <span class="hljs-string">'right'</span>}</span>`</span>);
+
+        lookInitialDirection(<span class="hljs-literal">true</span>)
+          .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+            <span class="hljs-keyword">return</span> lookInitialDirection(<span class="hljs-literal">true</span>);
+          })
+          .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+            resolve();
+          })
+          .catch(
+            <span class="hljs-comment">/* istanbul ignore next */</span> e =&gt; {
+              logger.warn(<span class="hljs-string">'an error occurred turning back to intial direction!'</span>, e);
+              pubsub.pub(messages.ERROR_STATE);
+            }
+          );
+      })
+      .catch(
+        <span class="hljs-comment">/* istanbul ignore next */</span> e =&gt; {
+          logger.warn(<span class="hljs-string">'an error occurred deciding turning direction!'</span>, e);
+          pubsub.pub(messages.ERROR_STATE);
+        }
+      );
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-43">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-43">&#182;</a>
+              </div>
+              <p>get average of the set of proximities</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-comment">/* eslint-disable no-shadow */</span>
+<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">averageProximity</span>(<span class="hljs-params">proximities</span>) </span>{
+  <span class="hljs-comment">/* istanbul ignore if */</span>
+  <span class="hljs-keyword">if</span> (proximities == <span class="hljs-literal">null</span> || proximities.size === <span class="hljs-number">0</span>) {
+    <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+  }
+
+  <span class="hljs-keyword">let</span> sum = <span class="hljs-number">0</span>;
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> proximity <span class="hljs-keyword">of</span> proximities) {
+    sum += proximity;
+  }
+
+  <span class="hljs-keyword">return</span> sum / proximities.size;
+}
+<span class="hljs-comment">/* eslint-enable no-shadow */</span>
+
+exports.startup = startup;
+exports.moveForward = moveForward;
+exports.moveBackward = moveBackward;
+exports.stop = stop;
+exports.turnRight = turnRight;
+exports.turnLeft = turnLeft;
+
+exports.turnDuration = TURN_DURATION;
+exports.backupDuration = BACK_UP_DURATION;
+exports.maxRecentTurns = MAX_RECENT_TURNS;
+exports.maxRecentTurnsTimeframe = MAX_RECENT_TURNS_TIMEFRAME;
+exports.proximitiesRecordingDuration = PROXIMITIES_RECODING_DURATION;
+exports.minProximity = MIN_PROXIMITY;</pre></div></div>
+            
+        </li>
+        
+    </ul>
+  </div>
+</body>
+</html>

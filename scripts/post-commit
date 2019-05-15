@@ -1,0 +1,3 @@
+# (put in .git/hooks to deploy on commit)
+node scripts/deploy.js
+exit 0
