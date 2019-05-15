@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <title>autoredeploy.js</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, target-densitydpi=160dpi, initial-scale=1.0; maximum-scale=1.0; user-scalable=0;">
+  <link rel="stylesheet" media="all" href="../docco.css" />
+</head>
+<body>
+  <div id="container">
+    <div id="background"></div>
+    
+      <ul id="jump_to">
+        <li>
+          <a class="large" href="javascript:void(0);">Jump To &hellip;</a>
+          <a class="small" href="javascript:void(0);">+</a>
+          <div id="jump_wrapper">
+          <div id="jump_page_wrapper">
+            <div id="jump_page">
+              
+                
+                <a class="source" href="autoredeploy.html">
+                  autoredeploy/autoredeploy.js
+                </a>
+              
+                
+                <a class="source" href="../boardService.html">
+                  boardService.js
+                </a>
+              
+                
+                <a class="source" href="../catDetectionService.html">
+                  catDetectionService.js
+                </a>
+              
+                
+                <a class="source" href="../connectionService.html">
+                  connectionService.js
+                </a>
+              
+                
+                <a class="source" href="../detectCat.html">
+                  detectCat.js
+                </a>
+              
+                
+                <a class="source" href="../index.html">
+                  index.js
+                </a>
+              
+                
+                <a class="source" href="../ledService.html">
+                  ledService.js
+                </a>
+              
+                
+                <a class="source" href="../logger.html">
+                  logger.js
+                </a>
+              
+                
+                <a class="source" href="../messages.html">
+                  messages.js
+                </a>
+              
+                
+                <a class="source" href="../navigationService.html">
+                  navigationService.js
+                </a>
+              
+                
+                <a class="source" href="../pubsub.html">
+                  pubsub.js
+                </a>
+              
+                
+                <a class="source" href="../robot.html">
+                  robot.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/calibrateServo.html">
+                  scripts/calibrateServo.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/deploy.html">
+                  scripts/deploy.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/deployFunction.html">
+                  scripts/deployFunction.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/generateAuthToken.html">
+                  scripts/generateAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/revokeAuthToken.html">
+                  scripts/revokeAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/sendMessage.html">
+                  scripts/sendMessage.js
+                </a>
+              
+                
+                <a class="source" href="../scripts/subscribeToLogMessages.html">
+                  scripts/subscribeToLogMessages.js
+                </a>
+              
+            </div>
+          </div>
+        </li>
+      </ul>
+    
+    <ul class="sections">
+        
+          <li id="title">
+              <div class="annotation">
+                  <h1>autoredeploy.js</h1>
+              </div>
+          </li>
+        
+        
+        
+        <li id="section-1">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-1">&#182;</a>
+              </div>
+              <p>cat-robot auto-redeploy script!</p>
+<p>listens for pubnub message to auto-redeploy and then clones or updates the repo
+and (re)starts the app</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-comment">/* eslint-disable import/no-unresolved */</span>
+<span class="hljs-meta">'use strict'</span>;
+
+<span class="hljs-keyword">const</span> path = <span class="hljs-built_in">require</span>(<span class="hljs-string">'path'</span>);
+<span class="hljs-keyword">const</span> npm = <span class="hljs-built_in">require</span>(<span class="hljs-string">'npm'</span>);
+<span class="hljs-keyword">const</span> util = <span class="hljs-built_in">require</span>(<span class="hljs-string">'util'</span>);
+
+<span class="hljs-keyword">const</span> PubNub = <span class="hljs-built_in">require</span>(<span class="hljs-string">'pubnub'</span>);
+<span class="hljs-keyword">const</span> pm2 = <span class="hljs-built_in">require</span>(<span class="hljs-string">'pm2'</span>);
+<span class="hljs-keyword">const</span> dotenv = <span class="hljs-built_in">require</span>(<span class="hljs-string">'dotenv'</span>);
+<span class="hljs-keyword">const</span> shell = <span class="hljs-built_in">require</span>(<span class="hljs-string">'shelljs'</span>);
+<span class="hljs-keyword">const</span> winston = <span class="hljs-built_in">require</span>(<span class="hljs-string">'winston'</span>);
+<span class="hljs-keyword">const</span> Repo = <span class="hljs-built_in">require</span>(<span class="hljs-string">'git-tools'</span>);
+<span class="hljs-keyword">const</span> rimraf = <span class="hljs-built_in">require</span>(<span class="hljs-string">'rimraf'</span>);
+
+<span class="hljs-keyword">const</span> DEPLOY_CHANNEL = <span class="hljs-string">'DEPLOY'</span>;
+<span class="hljs-keyword">const</span> LOG_CHANNEL = <span class="hljs-string">'LOG'</span>;
+
+<span class="hljs-keyword">const</span> UNCAUGHT_EXCEPTION = <span class="hljs-string">'uncaughtException'</span>;
+<span class="hljs-keyword">const</span> ERROR_EXIT_DELAY = <span class="hljs-number">1000</span>;
+
+<span class="hljs-keyword">const</span> UPDATE = <span class="hljs-string">'UPDATE'</span>;
+<span class="hljs-keyword">const</span> RESTART = <span class="hljs-string">'RESTART'</span>;
+<span class="hljs-keyword">const</span> REBOOT = <span class="hljs-string">'REBOOT'</span>;
+<span class="hljs-keyword">const</span> SHUTDOWN = <span class="hljs-string">'SHUTDOWN'</span>;
+
+<span class="hljs-keyword">const</span> SHUTTING_DOWN = <span class="hljs-string">'SHUTTING_DOWN'</span>;
+<span class="hljs-keyword">const</span> SHUTDOWN_DELAY = <span class="hljs-number">3000</span>;
+
+<span class="hljs-keyword">const</span> SHUTDOWN_COMMAND = <span class="hljs-string">'sudo shutdown now'</span>;
+<span class="hljs-keyword">const</span> REBOOT_COMMAND = <span class="hljs-string">'sudo shutdown -r now'</span>;
+
+<span class="hljs-keyword">const</span> ROBOT_PATH = <span class="hljs-string">'robot'</span>;
+<span class="hljs-keyword">const</span> ROBOT_PROCESS = <span class="hljs-string">'robot'</span>;
+
+<span class="hljs-keyword">const</span> ONLINE_STATUS = <span class="hljs-string">'online'</span>;
+<span class="hljs-keyword">const</span> ORIGIN = <span class="hljs-string">'origin'</span>;
+<span class="hljs-keyword">const</span> NODE_MODULES = <span class="hljs-string">'node_modules'</span>;
+
+<span class="hljs-keyword">const</span> LOG_FILE = <span class="hljs-string">'autoredeploy.log'</span>;
+<span class="hljs-keyword">const</span> LOG_LEVEL = <span class="hljs-string">'verbose'</span>;
+
+<span class="hljs-keyword">const</span> ENV = <span class="hljs-string">'.env'</span>;
+
+dotenv.config({
+  <span class="hljs-attr">path</span>: path.resolve(process.cwd(), ENV)
+});
+
+<span class="hljs-keyword">const</span> { PUBLISH_KEY, SUBSCRIBE_KEY, AUTHORIZATION_TOKEN, REPO, BRANCH, PI } = process.env;
+
+<span class="hljs-keyword">const</span> pubnub = <span class="hljs-keyword">new</span> PubNub({
+  <span class="hljs-attr">publishKey</span>: PUBLISH_KEY,
+  <span class="hljs-attr">subscribeKey</span>: SUBSCRIBE_KEY,
+  <span class="hljs-attr">authKey</span>: AUTHORIZATION_TOKEN,
+  <span class="hljs-attr">ssl</span>: <span class="hljs-literal">true</span>
+});
+
+<span class="hljs-keyword">const</span> logger = initLogger();
+
+initUncaughExceptionHandler();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-2">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-2">&#182;</a>
+              </div>
+              <p>listen for redeploy messages</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>listenForDeployMessages();
+
+logger.info(<span class="hljs-string">'autoredeploy started...'</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-3">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-3">&#182;</a>
+              </div>
+              <p>start robot!</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">start</span>(<span class="hljs-params"></span>) </span>{
+  pm2.start(
+    ROBOT_PATH,
+    {
+      <span class="hljs-attr">name</span>: ROBOT_PROCESS
+    },
+    (err, proc) =&gt; {
+      <span class="hljs-keyword">if</span> (err) {
+        logger.error(<span class="hljs-string">'error occurred trying to start robot!'</span>, err);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      <span class="hljs-keyword">if</span> (!proc) {
+        logger.error(<span class="hljs-string">'could not start robot!'</span>);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      logger.info(<span class="hljs-string">'starting robot...'</span>);
+    }
+  );
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-4">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-4">&#182;</a>
+              </div>
+              <p>npm install</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">installDependencies</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.info(<span class="hljs-string">'installing dependencies...'</span>);
+    <span class="hljs-keyword">const</span> cwd = process.cwd();
+
+    <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">switchToRobotDirectory</span>(<span class="hljs-params"></span>) </span>{
+      <span class="hljs-keyword">try</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-5">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-5">&#182;</a>
+              </div>
+              <p>logger.verbose(‘switching to robot directory’);</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        process.chdir(ROBOT_PATH);
+      } <span class="hljs-keyword">catch</span> (err) {
+        logger.error(<span class="hljs-string">'error occured changing working directory!'</span>, err);
+        reject(err);
+      }
+    }
+
+    <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">switchBackToCurrentDirectory</span>(<span class="hljs-params"></span>) </span>{
+      <span class="hljs-keyword">try</span> {
+        process.chdir(cwd);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-6">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-6">&#182;</a>
+              </div>
+              <p>logger.verbose(‘switched back to cwd’);</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      } <span class="hljs-keyword">catch</span> (err) {
+        logger.error(<span class="hljs-string">'error occured switching back to current directory!'</span>, err);
+      }
+    }
+
+    switchToRobotDirectory();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-7">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-7">&#182;</a>
+              </div>
+              <p>run npm install</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    npm.load(
+      {
+        <span class="hljs-attr">production</span>: <span class="hljs-literal">true</span> <span class="hljs-comment">// don't install devDependencies</span>
+      },
+      err =&gt; {
+        <span class="hljs-keyword">if</span> (err) {
+          logger.error(
+            <span class="hljs-string">'error occured loading npm while tyring got install dependencies!'</span>,
+            err
+          );
+          switchBackToCurrentDirectory();
+          reject(err);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        npm.commands.install([], () =&gt; {
+          logger.info(<span class="hljs-string">'done installing dependencies!'</span>);
+          switchBackToCurrentDirectory();
+          resolve();
+        });
+      }
+    );
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-8">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-8">&#182;</a>
+              </div>
+              <p>git clone</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">gitClone</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.info(<span class="hljs-string">'cloning repo...'</span>);
+
+    Repo.clone(
+      {
+        <span class="hljs-attr">repo</span>: REPO,
+        <span class="hljs-attr">dir</span>: ROBOT_PATH,
+        <span class="hljs-attr">branch</span>: BRANCH,
+        <span class="hljs-attr">depth</span>: <span class="hljs-number">1</span>
+      },
+      (error, repo) =&gt; {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-9">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-9">&#182;</a>
+              </div>
+              <p>eslint-disable-line no-shadow</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>        <span class="hljs-keyword">if</span> (error) {
+          logger.error(<span class="hljs-string">'error occured cloning repo!'</span>, error);
+          reject(error);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        <span class="hljs-keyword">if</span> (!repo) {
+          logger.error(<span class="hljs-string">'was unable to clone repo!'</span>);
+          reject(error);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        logger.info(<span class="hljs-string">'cloned repo!'</span>);
+        resolve();
+      }
+    );
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-10">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-10">&#182;</a>
+              </div>
+              <p>delete current robot directory</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">deleteDirectory</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.verbose(<span class="hljs-string">'deleting directory...'</span>);
+
+    rimraf(ROBOT_PATH, err =&gt; {
+      <span class="hljs-keyword">if</span> (err) {
+        logger.error(<span class="hljs-string">'error occured deleting directory!'</span>, err);
+        reject(err);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      logger.verbose(<span class="hljs-string">'done deleting directory'</span>);
+      resolve();
+    });
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-11">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-11">&#182;</a>
+              </div>
+              <p>clone the repo, npm install, and startup</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">cloneRepo</span>(<span class="hljs-params"></span>) </span>{
+  deleteDirectory()
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">return</span> gitClone();
+    })
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">return</span> installDependencies();
+    })
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      start();
+    })
+    .catch(<span class="hljs-function"><span class="hljs-params">e</span> =&gt;</span> {
+      logger.error(<span class="hljs-string">'could not clone repo!'</span>, e);
+    });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-12">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-12">&#182;</a>
+              </div>
+              <p>git pull –rebse</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">gitPull</span>(<span class="hljs-params">localRepo</span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.verbose(<span class="hljs-string">`running git pull --rebase origin <span class="hljs-subst">${BRANCH}</span>...`</span>);
+
+    localRepo.exec.call(localRepo, <span class="hljs-string">'pull'</span>, <span class="hljs-string">'--rebase'</span>, <span class="hljs-string">'origin'</span>, BRANCH, error =&gt; {
+      <span class="hljs-keyword">if</span> (error) {
+        logger.error(<span class="hljs-string">'error trying to pull repo:'</span>, error);
+        reject(error);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      logger.verbose(<span class="hljs-string">'git pull done'</span>);
+      logger.info(<span class="hljs-string">'updated to the latest!'</span>);
+      resolve();
+    });
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-13">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-13">&#182;</a>
+              </div>
+              <p>reset any local changes</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">gitReset</span>(<span class="hljs-params">localRepo</span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.verbose(<span class="hljs-string">'running git reset --hard...'</span>);
+
+    localRepo.exec.call(localRepo, <span class="hljs-string">'reset'</span>, <span class="hljs-string">'--hard'</span>, error =&gt; {
+      <span class="hljs-keyword">if</span> (error) {
+        logger.error(<span class="hljs-string">'error trying to reset repo:'</span>, error);
+        reject(error);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      logger.verbose(<span class="hljs-string">'git reset done'</span>);
+      resolve();
+    });
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-14">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-14">&#182;</a>
+              </div>
+              <p>delete any untracked files (except node_modules directory)</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">gitClean</span>(<span class="hljs-params">localRepo</span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> <span class="hljs-built_in">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve, reject</span>) =&gt;</span> {
+    logger.verbose(<span class="hljs-string">'running git clean -fdx -e node_modules...'</span>);
+
+    localRepo.exec.call(
+      localRepo,
+      <span class="hljs-string">'clean'</span>,
+      <span class="hljs-string">'-f'</span>,
+      <span class="hljs-string">'-d'</span>,
+      <span class="hljs-string">'-x'</span>,
+      <span class="hljs-string">'-e'</span>,
+      NODE_MODULES,
+      error =&gt; {
+        <span class="hljs-keyword">if</span> (error) {
+          logger.error(<span class="hljs-string">'error trying to clean repo:'</span>, error);
+          reject(error);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        logger.verbose(<span class="hljs-string">'git clean done'</span>);
+        resolve();
+      }
+    );
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-15">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-15">&#182;</a>
+              </div>
+              <p>update repo to the latest, npm install, and startup</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">pullRepo</span>(<span class="hljs-params">localRepo</span>) </span>{
+  gitClean(localRepo)
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">return</span> gitReset(localRepo);
+    })
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">return</span> gitPull(localRepo);
+    })
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      <span class="hljs-keyword">return</span> installDependencies();
+    })
+    .then(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      start();
+    })
+    .catch(<span class="hljs-function"><span class="hljs-params">e</span> =&gt;</span> {
+      logger.error(<span class="hljs-string">'could not pull repo!'</span>, e);
+      cloneRepo();
+    });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-16">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-16">&#182;</a>
+              </div>
+              <p>pull or clone the repo</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">update</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">const</span> localRepo = <span class="hljs-keyword">new</span> Repo(ROBOT_PATH);
+
+  localRepo.isRepo(<span class="hljs-function">(<span class="hljs-params">error, isRepo</span>) =&gt;</span> {
+    <span class="hljs-keyword">if</span> (error) {
+      logger.error(<span class="hljs-string">'error occured trying to check if directory is a git repo!'</span>, error);
+      <span class="hljs-keyword">return</span>;
+    }
+
+    <span class="hljs-keyword">if</span> (!isRepo) {
+      logger.verbose(<span class="hljs-string">'directory is not a git repo'</span>);
+      cloneRepo();
+      <span class="hljs-keyword">return</span>;
+    }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-17">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-17">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line no-shadow</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    localRepo.remotes(<span class="hljs-function">(<span class="hljs-params">error, remotes</span>) =&gt;</span> {
+      <span class="hljs-keyword">if</span> (error) {
+        logger.error(<span class="hljs-string">'error occurred reading repo remotes!'</span>, error);
+        <span class="hljs-keyword">return</span>;
+      }
+
+      <span class="hljs-keyword">if</span> (!remotes) {
+        logger.error(<span class="hljs-string">'could not read repo remotes!'</span>);
+        <span class="hljs-keyword">return</span>;
+      }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-18">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-18">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line eqeqeq</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      <span class="hljs-keyword">const</span> origin = remotes.filter(<span class="hljs-function"><span class="hljs-params">remote</span> =&gt;</span> remote.name == ORIGIN);
+
+      <span class="hljs-keyword">if</span> (!origin || origin.length !== <span class="hljs-number">1</span>) {
+        logger.error(<span class="hljs-string">'could not determine repo origin!'</span>);
+        <span class="hljs-keyword">return</span>;
+      }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-19">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-19">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line eqeqeq</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      <span class="hljs-keyword">const</span> sameOrigin = path.normalize(origin[<span class="hljs-number">0</span>].url) == path.normalize(REPO);
+
+      <span class="hljs-keyword">if</span> (!sameOrigin) {
+        logger.info(<span class="hljs-string">'directory doesnt have same origin'</span>);
+        cloneRepo();
+        <span class="hljs-keyword">return</span>;
+      }
+
+      pullRepo(localRepo);
+    });
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-20">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-20">&#182;</a>
+              </div>
+              <p>stop robot, if necessary, and update the code</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">redeploy</span>(<span class="hljs-params"></span>) </span>{
+  logger.info(<span class="hljs-string">'updating...'</span>);
+
+  pm2.connect(<span class="hljs-function"><span class="hljs-params">err</span> =&gt;</span> {
+    <span class="hljs-keyword">if</span> (err) {
+      logger.error(<span class="hljs-string">'error occurred connecting to process mananager!'</span>, err);
+      <span class="hljs-keyword">return</span>;
+    }
+
+    pm2.describe(ROBOT_PROCESS, (err, description) =&gt; {
+      <span class="hljs-keyword">if</span> (err) {
+        logger.error(<span class="hljs-string">'error occurred trying to describe process!'</span>, err);
+        <span class="hljs-keyword">return</span>;
+      }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-21">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-21">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line eqeqeq</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      <span class="hljs-keyword">const</span> isRunning = description[<span class="hljs-number">0</span>] &amp;&amp; description[<span class="hljs-number">0</span>].pm2_env.status == ONLINE_STATUS;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-22">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-22">&#182;</a>
+              </div>
+              <p>if not running, update</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      <span class="hljs-keyword">if</span> (!isRunning) {
+        logger.info(<span class="hljs-string">'robot not currently running'</span>);
+        update();
+        <span class="hljs-keyword">return</span>;
+      }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-23">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-23">&#182;</a>
+              </div>
+              <p>if running, stop it, and then update</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      logger.info(<span class="hljs-string">'robot running, stopping...'</span>);
+      pm2.stop(ROBOT_PROCESS, err =&gt; {
+        <span class="hljs-keyword">if</span> (err) {
+          logger.error(<span class="hljs-string">'error occurred trying to stop robot!'</span>, err);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        logger.info(<span class="hljs-string">'stopped robot'</span>);
+        update();
+      });
+    });
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-24">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-24">&#182;</a>
+              </div>
+              <p>restart robot</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">restart</span>(<span class="hljs-params"></span>) </span>{
+  logger.info(<span class="hljs-string">'restarting...'</span>);
+
+  pm2.connect(<span class="hljs-function"><span class="hljs-params">err</span> =&gt;</span> {
+    <span class="hljs-keyword">if</span> (err) {
+      logger.error(<span class="hljs-string">'error occurred connecting to process mananager!'</span>, err);
+      <span class="hljs-keyword">return</span>;
+    }</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-25">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-25">&#182;</a>
+              </div>
+              <p>publish shutdown message</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    pubnub.publish(
+      {
+        <span class="hljs-attr">message</span>: SHUTTING_DOWN,
+        <span class="hljs-attr">channel</span>: DEPLOY_CHANNEL
+      },
+      ({ error }) =&gt; {
+        <span class="hljs-keyword">if</span> (error) {
+          logger.error(<span class="hljs-string">'error occured publishing shutting down message!'</span>, error);
+        }
+      }
+    );</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-26">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-26">&#182;</a>
+              </div>
+              <p>give robot some time to prepare for restart</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-27">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-27">&#182;</a>
+              </div>
+              <p>and restart</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      pm2.restart(ROBOT_PROCESS, err =&gt; {
+        <span class="hljs-keyword">if</span> (err) {
+          logger.error(<span class="hljs-string">'error occurred restarting!'</span>, err);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        logger.info(<span class="hljs-string">'robot restarted!'</span>, err);
+      });
+    }, SHUTDOWN_DELAY);
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-28">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-28">&#182;</a>
+              </div>
+              <p>shutdown robot</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">shutdown</span>(<span class="hljs-params">reboot</span>) </span>{
+  logger.info(reboot ? <span class="hljs-string">'rebooting...'</span> : <span class="hljs-string">'shutting down...'</span>);
+
+  <span class="hljs-keyword">const</span> shutdownCommand = reboot ? REBOOT_COMMAND : SHUTDOWN_COMMAND;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-29">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-29">&#182;</a>
+              </div>
+              <p>publish shutdown message</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  pubnub.publish(
+    {
+      <span class="hljs-attr">message</span>: SHUTTING_DOWN,
+      <span class="hljs-attr">channel</span>: DEPLOY_CHANNEL
+    },
+    ({ error }) =&gt; {
+      <span class="hljs-keyword">if</span> (error) {
+        logger.error(<span class="hljs-string">'error occured publishing shutting down message!'</span>, error);
+      }
+    }
+  );</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-30">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-30">&#182;</a>
+              </div>
+              <p>give robot some time to prepare for shutdown</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  <span class="hljs-keyword">if</span> (PI) {
+    setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-31">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-31">&#182;</a>
+              </div>
+              <p>and shutdown</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>      shell.exec(shutdownCommand, { <span class="hljs-attr">async</span>: <span class="hljs-literal">true</span> });
+    }, SHUTDOWN_DELAY);
+  }
+}
+
+<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">initLogger</span>(<span class="hljs-params"></span>) </span>{</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-32">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-32">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line no-shadow</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  <span class="hljs-keyword">const</span> logger = <span class="hljs-keyword">new</span> winston.Logger({
+    <span class="hljs-attr">transports</span>: [
+      <span class="hljs-keyword">new</span> winston.transports.Console({
+        <span class="hljs-attr">level</span>: LOG_LEVEL,
+        <span class="hljs-attr">handleExceptions</span>: <span class="hljs-literal">false</span>
+      }),
+      <span class="hljs-keyword">new</span> winston.transports.File({
+        <span class="hljs-attr">filename</span>: LOG_FILE,
+        <span class="hljs-attr">level</span>: LOG_LEVEL,
+        <span class="hljs-attr">handleExceptions</span>: <span class="hljs-literal">false</span>,
+        <span class="hljs-attr">json</span>: <span class="hljs-literal">false</span>
+      })
+    ],
+    <span class="hljs-attr">exitOnError</span>: <span class="hljs-literal">false</span>
+  });</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-33">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-33">&#182;</a>
+              </div>
+              <p>add pubnub transport
+eslint-disable-next-line func-names, no-multi-assign</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  <span class="hljs-keyword">const</span> pubnubTransport = (winston.transports.PubNub = <span class="hljs-function"><span class="hljs-keyword">function</span>(<span class="hljs-params"></span>) </span>{
+    <span class="hljs-keyword">this</span>.name = <span class="hljs-string">'pubnub'</span>;
+    <span class="hljs-keyword">this</span>.level = LOG_LEVEL;
+  });
+
+  util.inherits(pubnubTransport, winston.Transport);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-34">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-34">&#182;</a>
+              </div>
+              <p>log to pubnub, appending meta object if present
+eslint-disable-next-line func-names</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  pubnubTransport.prototype.log = <span class="hljs-function"><span class="hljs-keyword">function</span>(<span class="hljs-params">level, msg, meta, callback</span>) </span>{
+    <span class="hljs-keyword">const</span> hasMeta =
+      meta != <span class="hljs-literal">null</span> &amp;&amp; <span class="hljs-keyword">typeof</span> meta === <span class="hljs-string">'object'</span> &amp;&amp; <span class="hljs-built_in">Object</span>.entries(meta).length &gt; <span class="hljs-number">0</span>;
+
+    pubnub.publish(
+      {
+        <span class="hljs-attr">message</span>: !hasMeta ? msg : <span class="hljs-string">`<span class="hljs-subst">${msg}</span> - <span class="hljs-subst">${meta}</span>`</span>,
+        <span class="hljs-attr">channel</span>: LOG_CHANNEL
+      },
+      ({ error }) =&gt; {
+        <span class="hljs-keyword">if</span> (error) {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-35">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-35">&#182;</a>
+              </div>
+              <p>if can’t publish, log using default logger</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>          winston.add(winston.transports.File, {
+            <span class="hljs-attr">filename</span>: LOG_FILE,
+            <span class="hljs-attr">json</span>: <span class="hljs-literal">false</span>
+          });
+
+          winston.error(<span class="hljs-string">'error occured publishing log message!'</span>, error);
+          callback(error, <span class="hljs-literal">false</span>);
+          <span class="hljs-keyword">return</span>;
+        }
+
+        callback(<span class="hljs-literal">null</span>, <span class="hljs-literal">true</span>);
+      }
+    );
+  };
+
+  logger.add(winston.transports.PubNub, {});
+
+  <span class="hljs-keyword">return</span> logger;
+}
+
+<span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">initUncaughExceptionHandler</span>(<span class="hljs-params"></span>) </span>{
+  process.on(UNCAUGHT_EXCEPTION, e =&gt; {
+    logger.error(<span class="hljs-string">'autoredeploy uncaughtException occured!'</span>, e);
+
+    <span class="hljs-keyword">const</span> timer = setTimeout(<span class="hljs-function"><span class="hljs-params">()</span> =&gt;</span> {
+      process.exit(<span class="hljs-number">1</span>);
+    }, ERROR_EXIT_DELAY);
+
+    timer.unref();
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-36">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-36">&#182;</a>
+              </div>
+              <p>listen for redeploy messages</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">listenForDeployMessages</span>(<span class="hljs-params"></span>) </span>{
+  pubnub.addListener({
+    <span class="hljs-attr">message</span>: <span class="hljs-function">(<span class="hljs-params">{ message }</span>) =&gt;</span> {
+      <span class="hljs-keyword">if</span> (message === UPDATE) {
+        redeploy();
+      } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (message === RESTART) {
+        restart();
+      } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (message === REBOOT) {
+        shutdown(<span class="hljs-literal">true</span>);
+      } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (message === SHUTDOWN) {
+        shutdown();
+      }
+    }
+  });
+
+  pubnub.subscribe({
+    <span class="hljs-attr">channels</span>: [DEPLOY_CHANNEL]
+  });
+}</pre></div></div>
+            
+        </li>
+        
+    </ul>
+  </div>
+</body>
+</html>

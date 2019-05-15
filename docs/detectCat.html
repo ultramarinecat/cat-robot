@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <title>detectCat.js</title>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, target-densitydpi=160dpi, initial-scale=1.0; maximum-scale=1.0; user-scalable=0;">
+  <link rel="stylesheet" media="all" href="docco.css" />
+</head>
+<body>
+  <div id="container">
+    <div id="background"></div>
+    
+      <ul id="jump_to">
+        <li>
+          <a class="large" href="javascript:void(0);">Jump To &hellip;</a>
+          <a class="small" href="javascript:void(0);">+</a>
+          <div id="jump_wrapper">
+          <div id="jump_page_wrapper">
+            <div id="jump_page">
+              
+                
+                <a class="source" href="autoredeploy/autoredeploy.html">
+                  autoredeploy/autoredeploy.js
+                </a>
+              
+                
+                <a class="source" href="boardService.html">
+                  boardService.js
+                </a>
+              
+                
+                <a class="source" href="catDetectionService.html">
+                  catDetectionService.js
+                </a>
+              
+                
+                <a class="source" href="connectionService.html">
+                  connectionService.js
+                </a>
+              
+                
+                <a class="source" href="detectCat.html">
+                  detectCat.js
+                </a>
+              
+                
+                <a class="source" href="index.html">
+                  index.js
+                </a>
+              
+                
+                <a class="source" href="ledService.html">
+                  ledService.js
+                </a>
+              
+                
+                <a class="source" href="logger.html">
+                  logger.js
+                </a>
+              
+                
+                <a class="source" href="messages.html">
+                  messages.js
+                </a>
+              
+                
+                <a class="source" href="navigationService.html">
+                  navigationService.js
+                </a>
+              
+                
+                <a class="source" href="pubsub.html">
+                  pubsub.js
+                </a>
+              
+                
+                <a class="source" href="robot.html">
+                  robot.js
+                </a>
+              
+                
+                <a class="source" href="scripts/calibrateServo.html">
+                  scripts/calibrateServo.js
+                </a>
+              
+                
+                <a class="source" href="scripts/deploy.html">
+                  scripts/deploy.js
+                </a>
+              
+                
+                <a class="source" href="scripts/deployFunction.html">
+                  scripts/deployFunction.js
+                </a>
+              
+                
+                <a class="source" href="scripts/generateAuthToken.html">
+                  scripts/generateAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="scripts/revokeAuthToken.html">
+                  scripts/revokeAuthToken.js
+                </a>
+              
+                
+                <a class="source" href="scripts/sendMessage.html">
+                  scripts/sendMessage.js
+                </a>
+              
+                
+                <a class="source" href="scripts/subscribeToLogMessages.html">
+                  scripts/subscribeToLogMessages.js
+                </a>
+              
+            </div>
+          </div>
+        </li>
+      </ul>
+    
+    <ul class="sections">
+        
+          <li id="title">
+              <div class="annotation">
+                  <h1>detectCat.js</h1>
+              </div>
+          </li>
+        
+        
+        
+        <li id="section-1">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-1">&#182;</a>
+              </div>
+              <p>takes photo with camera and identifies if it contains a cat</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-comment">/* eslint-disable no-console */</span>
+<span class="hljs-meta">'use strict'</span>;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-2">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-2">&#182;</a>
+              </div>
+              <p>eslint-disable-next-line import/no-unresolved</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-keyword">const</span> { parentPort } = <span class="hljs-built_in">require</span>(<span class="hljs-string">'worker_threads'</span>);
+
+<span class="hljs-keyword">const</span> tf = <span class="hljs-built_in">require</span>(<span class="hljs-string">'@tensorflow/tfjs'</span>); <span class="hljs-comment">// eslint-disable-line import/no-extraneous-dependencies</span>
+<span class="hljs-keyword">const</span> mobilenet = <span class="hljs-built_in">require</span>(<span class="hljs-string">'@tensorflow-models/mobilenet'</span>);
+<span class="hljs-built_in">require</span>(<span class="hljs-string">'@tensorflow/tfjs-node'</span>);
+
+<span class="hljs-keyword">const</span> winston = <span class="hljs-built_in">require</span>(<span class="hljs-string">'winston'</span>);
+<span class="hljs-keyword">const</span> jpeg = <span class="hljs-built_in">require</span>(<span class="hljs-string">'jpeg-js'</span>);
+<span class="hljs-keyword">const</span> { Raspistill } = <span class="hljs-built_in">require</span>(<span class="hljs-string">'node-raspistill'</span>);
+
+<span class="hljs-keyword">const</span> MOBILE_NET_VERSION = <span class="hljs-number">1</span>;
+<span class="hljs-keyword">const</span> MOBILE_NET_ALPHA = <span class="hljs-number">1.0</span>;
+
+<span class="hljs-keyword">const</span> NUM_RGB_CHANNELS = <span class="hljs-number">3</span>;
+<span class="hljs-keyword">const</span> NUM_RGBA_CHANNELS = <span class="hljs-number">4</span>;
+
+<span class="hljs-keyword">const</span> CAT_DETECTION_DELAY = <span class="hljs-number">12000</span>;
+<span class="hljs-keyword">const</span> MAX_PREDICTIONS = <span class="hljs-number">3</span>;
+<span class="hljs-keyword">const</span> INT_32 = <span class="hljs-string">'int32'</span>;
+
+<span class="hljs-keyword">const</span> CONFIGURATION_FILE = <span class="hljs-string">'file://robot/mobilenet/model.json'</span>;
+
+<span class="hljs-keyword">const</span> LOG_FILE = <span class="hljs-string">'detectCat.log'</span>;
+<span class="hljs-keyword">const</span> LOG_LEVEL = <span class="hljs-string">'verbose'</span>;
+
+<span class="hljs-keyword">const</span> MESSAGE = <span class="hljs-string">'message'</span>;
+<span class="hljs-keyword">const</span> INITIALIZE = <span class="hljs-string">'initialize'</span>;
+
+<span class="hljs-keyword">const</span> INITIALIZED = <span class="hljs-string">'initialized'</span>;
+<span class="hljs-keyword">const</span> PREDICTIONS = <span class="hljs-string">'predictions'</span>;
+
+<span class="hljs-keyword">const</span> JPG = <span class="hljs-string">'jpg'</span>;
+<span class="hljs-keyword">const</span> WB_AUTO = <span class="hljs-string">'auto'</span>;
+<span class="hljs-keyword">const</span> WIDTH = <span class="hljs-number">1280</span>;
+<span class="hljs-keyword">const</span> HEIGHT = <span class="hljs-number">960</span>;
+
+<span class="hljs-keyword">const</span> DELAY = <span class="hljs-number">10</span>;
+
+<span class="hljs-keyword">let</span> model;
+<span class="hljs-keyword">let</span> camera;
+<span class="hljs-keyword">let</span> interval;</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-3">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-3">&#182;</a>
+              </div>
+              <p>init logger</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-keyword">const</span> logger = initLogger();
+
+parentPort.on(MESSAGE, ({ message }) =&gt; {
+  <span class="hljs-keyword">if</span> (message === INITIALIZE) {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-4">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-4">&#182;</a>
+              </div>
+              <p>initialize</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    init();
+  }
+});
+
+<span class="hljs-keyword">async</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">init</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">try</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-5">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-5">&#182;</a>
+              </div>
+              <p>init camera</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">'initializing camera...'</span>);
+    initCamera();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-6">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-6">&#182;</a>
+              </div>
+              <p>load mobilenet model</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">'loading model...'</span>);
+    <span class="hljs-built_in">console</span>.time(<span class="hljs-string">'loading'</span>);
+
+    <span class="hljs-keyword">await</span> loadModel();
+    <span class="hljs-built_in">console</span>.timeEnd(<span class="hljs-string">'loading'</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-7">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-7">&#182;</a>
+              </div>
+              <p>detect cats</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    detectCat();
+    interval = setInterval(detectCat, CAT_DETECTION_DELAY);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-8">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-8">&#182;</a>
+              </div>
+              <p>post that initialized</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    postInitialized();
+  } <span class="hljs-keyword">catch</span> (e) {
+    logger.error(<span class="hljs-string">'an error occured initializing cat detection!'</span>, e);
+    clearInterval(interval);
+    process.exit();
+  }
+}
+
+<span class="hljs-keyword">async</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">detectCat</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">try</span> {</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-9">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-9">&#182;</a>
+              </div>
+              <p>take picture</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">'taking photo...'</span>);
+    <span class="hljs-keyword">const</span> photo = <span class="hljs-keyword">await</span> camera.takePhoto();</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-10">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-10">&#182;</a>
+              </div>
+              <p>classify image</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">'classifying image...'</span>);
+    <span class="hljs-built_in">console</span>.time(<span class="hljs-string">'classifying'</span>);
+
+    <span class="hljs-keyword">const</span> predictions = <span class="hljs-keyword">await</span> model.classify(convertToTensor3D(photo));
+    <span class="hljs-built_in">console</span>.timeEnd(<span class="hljs-string">'classifying'</span>);</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-11">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-11">&#182;</a>
+              </div>
+              <p>post prediction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>    logger.info(<span class="hljs-string">'classifying completed'</span>);
+    postPredictions(predictions);
+  } <span class="hljs-keyword">catch</span> (e) {
+    logger.error(<span class="hljs-string">'an error occured attempting to identify cat!'</span>, e);
+    clearInterval(interval);
+    process.exit();
+  }
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-12">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-12">&#182;</a>
+              </div>
+              <p>init camera</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">initCamera</span>(<span class="hljs-params"></span>) </span>{
+  camera = <span class="hljs-keyword">new</span> Raspistill({
+    <span class="hljs-attr">encoding</span>: JPG,
+    <span class="hljs-attr">width</span>: WIDTH,
+    <span class="hljs-attr">height</span>: HEIGHT,
+    <span class="hljs-attr">awb</span>: WB_AUTO,
+    <span class="hljs-attr">time</span>: DELAY
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-13">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-13">&#182;</a>
+              </div>
+              <p>load mobilenet model</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-keyword">async</span> <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">loadModel</span>(<span class="hljs-params"></span>) </span>{
+  model = <span class="hljs-keyword">new</span> mobilenet.MobileNet(MOBILE_NET_VERSION, MOBILE_NET_ALPHA);
+  model.path = CONFIGURATION_FILE;
+
+  <span class="hljs-keyword">await</span> model.load();
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-14">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-14">&#182;</a>
+              </div>
+              <p>post initialized</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">postInitialized</span>(<span class="hljs-params"></span>) </span>{
+  parentPort.postMessage({ <span class="hljs-attr">message</span>: INITIALIZED });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-15">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-15">&#182;</a>
+              </div>
+              <p>post predictions</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">postPredictions</span>(<span class="hljs-params">predictions</span>) </span>{</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-16">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-16">&#182;</a>
+              </div>
+              <p>post class name and probability of first prediction</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre>  parentPort.postMessage({
+    <span class="hljs-attr">message</span>: PREDICTIONS,
+    <span class="hljs-attr">predictions</span>: predictions == <span class="hljs-literal">null</span> ? <span class="hljs-literal">null</span> : predictions.slice(<span class="hljs-number">0</span>, MAX_PREDICTIONS)
+  });
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-17">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-17">&#182;</a>
+              </div>
+              <p>decode image, convert into tf.tensor3D</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">convertToTensor3D</span>(<span class="hljs-params">image</span>) </span>{
+  <span class="hljs-keyword">const</span> data = jpeg.decode(image);
+  <span class="hljs-keyword">const</span> values = convertTo3Channels(data);
+  <span class="hljs-keyword">const</span> shape = [data.height, data.width, NUM_RGB_CHANNELS];
+  <span class="hljs-keyword">const</span> type = INT_32;
+
+  <span class="hljs-keyword">return</span> tf.tensor3d(values, shape, type);
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-18">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-18">&#182;</a>
+              </div>
+              <p>mobilenet only uses three color channels for classification, ignoring the alpha channel</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">convertTo3Channels</span>(<span class="hljs-params">image</span>) </span>{
+  <span class="hljs-keyword">const</span> pixels = image.data;
+  <span class="hljs-keyword">const</span> numPixels = image.width * image.height;
+  <span class="hljs-keyword">const</span> values = <span class="hljs-keyword">new</span> <span class="hljs-built_in">Int32Array</span>(numPixels * NUM_RGB_CHANNELS);
+
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; numPixels; i++) {
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> channel = <span class="hljs-number">1</span>; channel &lt;= NUM_RGB_CHANNELS; channel++) {
+      values[i * NUM_RGB_CHANNELS + channel] = pixels[i * NUM_RGBA_CHANNELS + channel];
+    }
+  }
+
+  <span class="hljs-keyword">return</span> values;
+}</pre></div></div>
+            
+        </li>
+        
+        
+        <li id="section-19">
+            <div class="annotation">
+              
+              <div class="pilwrap ">
+                <a class="pilcrow" href="#section-19">&#182;</a>
+              </div>
+              <p>logger</p>
+
+            </div>
+            
+            <div class="content"><div class='highlight'><pre><span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">initLogger</span>(<span class="hljs-params"></span>) </span>{
+  <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> winston.Logger({
+    <span class="hljs-attr">transports</span>: [
+      <span class="hljs-keyword">new</span> winston.transports.Console({
+        <span class="hljs-attr">level</span>: LOG_LEVEL,
+        <span class="hljs-attr">handleExceptions</span>: <span class="hljs-literal">false</span>
+      }),
+      <span class="hljs-keyword">new</span> winston.transports.File({
+        <span class="hljs-attr">filename</span>: LOG_FILE,
+        <span class="hljs-attr">level</span>: LOG_LEVEL,
+        <span class="hljs-attr">handleExceptions</span>: <span class="hljs-literal">false</span>,
+        <span class="hljs-attr">json</span>: <span class="hljs-literal">false</span>
+      })
+    ],
+    <span class="hljs-attr">exitOnError</span>: <span class="hljs-literal">false</span>
+  });
+}
+
+exports.init = init;
+exports.detectCat = detectCat;</pre></div></div>
+            
+        </li>
+        
+    </ul>
+  </div>
+</body>
+</html>
