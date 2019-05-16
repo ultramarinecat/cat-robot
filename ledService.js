@@ -10,7 +10,7 @@ const messages = require('./messages');
 const { pins } = require('./boardService');
 
 const STARTUP_LED_BLINK_RATE = 75;
-const STARTUP_LED_ON_DELAY = 2500;
+const STARTUP_LED_ON_DELAY = 20000;
 const ERROR_LED_BLINK_RATE = 750;
 
 const CAT_DETECTED_LED_BLINK_RATE = 60;
